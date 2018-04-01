@@ -1,5 +1,98 @@
 -- At the very start we want to restrict ourselves to only looking at jobs for which we have human outcomes
 
+-- Ensure that each job in our training set has at least 2 shortlisted and at least two rejected applications
+SELECT * INTO MISSandBox.kv.multi_outcome_jobs
+FROM (
+  SELECT
+    SQ1.ListingID,
+    SQ1.NumRejected,
+    SQ2.NumShortlisted
+  FROM
+    (SELECT
+       ListingID,
+       COUNT(*) AS NumRejected
+     FROM MISSandBox.kv.applications_reviewed_with_outcomes
+     WHERE Outcome = 'Rejected'
+     GROUP BY ListingID
+    ) AS SQ1
+    JOIN
+    (SELECT
+       ListingID,
+       COUNT(*) AS NumShortlisted
+     FROM MISSandBox.kv.applications_reviewed_with_outcomes
+     WHERE Outcome = 'Shortlisted'
+     GROUP BY ListingID
+    ) AS SQ2
+      ON SQ1.ListingID = SQ2.ListingID
+  WHERE NumShortlisted > 1 AND NumRejected > 1
+     ) AS SQ3
+
+-- Extract the jobs which have role requirements questions and multi-outcomes
+select
+     JobID,
+     ListingID,
+     IndustryID,
+     DisciplineID,
+     WorkTypeID,
+     LocationID,
+     IsEnhancedAd,
+     CreateDate,
+     StatusID,
+     LinkOut
+from MISSandBox.kv.nac_jobs_info
+WHERE HasQuestionnaireUrl = 1
+AND ListingID in (select DISTINCT ListingID from MISSandBox.kv.multi_outcome_jobs WHERE NumRejected > 9 and NumShortlisted > 9)
+-- Record count 97,835
+
+
+-- Pick up all the AcceptedApplicationID so we can link to the RR data
+-- Look only at the set of jobs with at least 2 shortlisted and at least 2 rejected applications
+-- Look only at jobs using RR
+SELECT
+  SQ1.ProspectID,
+  SQ1.ListingID,
+  SQ1.Outcome,
+  SQ1.NumOutcomeApps,
+  SQ1.NumRejected,
+  SQ1.NumShortlisted,
+  SQ2.AcceptedApplicationId
+from
+    (SELECT
+       A.*,
+       B.NumRejected,
+       B.NumShortlisted
+        FROM MISSandBox.kv.applications_reviewed_with_outcomes AS A
+        JOIN MISSandBox.kv.multi_outcome_jobs AS B
+            ON A.ListingID = B.ListingID) AS SQ1
+  JOIN
+    (SELECT
+       A.ApplicationCorrelationID,
+       A.ApplicationID,
+       A.AcceptedApplicationId,
+       B.ProspectID,
+       B.ListingID
+     FROM MISData.odsvw.WEB_dbo_ApplicationCorrelation A
+       JOIN MISSandBox.kv.applications_summary B
+         ON A.AcceptedApplicationId = B.FatFeedApplicationID
+     WHERE [$ETL_EffectiveYN] = 'Y') AS SQ2
+  ON SQ1.ProspectID = SQ2.ProspectID
+WHERE SQ1.Outcome in ('Rejected','Shortlisted')
+        AND SQ1.ListingID in (SELECT DISTINCT ListingID
+                              FROM MISSandBox.kv.nac_jobs_info
+                              WHERE HasQuestionnaireUrl = 1)
+
+
+-- There are both shortlisted and rejected outcomes in the RR jobs
+SELECT Outcome, count(*) as cnt
+FROM MISSandBox.kv.applications_reviewed_with_outcomes
+WHERE NumOutcomeApps > 5
+      AND Outcome in ('Rejected','Shortlisted')
+      AND ListingID in (SELECT DISTINCT ListingID
+                        FROM MISSandBox.kv.nac_jobs_info
+                        WHERE HasQuestionnaireUrl = 1)
+GROUP BY Outcome
+
+
 -- RR jobs with 2 or more shortlisted and rejected outcomes (from MIS)
 select count(DISTINCT job_id) from sandbox.kendra_nac_jobs
 -- 297,714
